@@ -6,13 +6,18 @@
 #include "istb_httpserver.h"
 struct httptaskpara   
 {  
-    int    port;
+    //int    port;
+    char *ip_port;
     char *doc_root;   
+    mg_io_fun *http_io_opreate_fun;
 };  
 int http_terminate=0;
 
 // This function will be called by mongoose on every new request
-static int index_html(struct mg_connection *conn) {
+static int user_defined_requst(struct mg_connection *conn) {
+   char fifoname[128]={0};
+   int  fifolen=0;
+   mg_io_fun *http_io_opreate=NULL;
   mhttpDBG("Hello!request_method[%s], "
          "http_headers name[%s],value[%s] \n"
          "http_headers name[%s],value[%s] \n"
@@ -28,6 +33,12 @@ static int index_html(struct mg_connection *conn) {
                 conn->http_headers[4].name, conn->http_headers[4].value,
                 conn->uri,
                  conn->query_string == NULL ? "(none)" : conn->query_string);
+  strncpy(fifoname,(conn->uri)+1,strlen(conn->uri)-1);//kick the '/', as the uri is:  /tmp/istb-1.ts
+  mhttpDBG("fifoname:%s \n",fifoname);
+  http_io_opreate=(mg_io_fun *)conn->server_param;
+  conn->userhandle=http_io_opreate->mg_io_open(fifoname,&fifolen);
+  mhttpDBG("fifolen:%d \n",fifolen);
+  mg_write_range(conn,fifoname,fifolen);
 
 #if 0
   mg_send_header(conn, "Server", "Inspur Media Server");
@@ -48,27 +59,28 @@ void * istb_httpserver_task(void * arg) {
   }
   struct mg_server *server;
   struct httptaskpara *para;
-  int port=0;
   char doc_rootstr[128]={0};
   char portstr[128]={0};
   para=(struct httptaskpara *)arg;
+  mg_io_fun  * http_io_fun;
   if (!(para->doc_root)) {
       mhttpDBG("param error  \n");
       return  0;
   }
-  port       =para->port;
-  strncpy(doc_rootstr,para->doc_root,sizeof(portstr));
+  strncpy(portstr,para->ip_port,sizeof(portstr));
+  strncpy(doc_rootstr,para->doc_root,sizeof(doc_rootstr));
+  http_io_fun=para->http_io_opreate_fun;
   free(para);
   para=NULL;
-
-
-  snprintf(portstr,sizeof(portstr),"%d",port);
   mhttpDBG("thread  port=%s,root: %s \n",portstr,doc_rootstr);
   // Create and configure the server
-  server = mg_create_server(NULL);
+
+  //http_io_fun.mg_io_close=
+  server = mg_create_server((void *)http_io_fun);
+  //server = mg_create_server(NULL);
   mg_set_option(server, "listening_port", portstr);
   mg_set_option(server, "document_root", doc_rootstr);
-  //mg_add_uri_handler(server, "/", index_html);
+  mg_add_uri_handler(server, "/", user_defined_requst);
 
   // Serve request. Hit Ctrl-C to terminate the program
   mhttpDBG("Starting on port %s\n", mg_get_option(server, "listening_port"));
@@ -80,7 +92,7 @@ void * istb_httpserver_task(void * arg) {
   mg_destroy_server(&server);
   return 0 ;
 }
-pthread_t istb_httpserver_create(int port, char * doc_root){
+pthread_t istb_httpserver_create(char * ip_port, char * doc_root,mg_io_fun * http_io_fun){
     int s=0;
     pthread_attr_t attr;
     pthread_t      ThreadId;
@@ -89,8 +101,9 @@ pthread_t istb_httpserver_create(int port, char * doc_root){
     if(!(para=(struct httptaskpara *)calloc(1,sizeof(struct httptaskpara)))){
         return 0;
     }
-    para->port=port;
+    para->ip_port=ip_port;
     para->doc_root=doc_root;
+    para->http_io_opreate_fun=http_io_fun;
     s = pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED);
     mhttpDBG("%s \n",para->doc_root);
