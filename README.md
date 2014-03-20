@@ -26,6 +26,9 @@ walker
 
 5.Usage:
 
+
+notice that you need make sure the ffmpeg libs  installed.
+
 type 'make' to build UDPtoHLS, and type 'make clean' to clear the target.
 
 
