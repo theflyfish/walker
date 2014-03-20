@@ -48,11 +48,12 @@ struct mg_connection {
   char *content;              // POST (or websocket message) data, or NULL
   int content_len;            // content length
 
-  int is_websocket;           // Connection is a websocket connection
-  int status_code;            // HTTP status code for HTTP error handler
+  int is_websocket;             // Connection is a websocket connection
+  int status_code;               // HTTP status code for HTTP error handler
   unsigned char wsbits;       // First byte of the websocket frame
   void *server_param;         // Parameter passed to mg_add_uri_handler()
-  void *connection_param;     // Placeholder for connection-specific data
+  void *connection_param;   // Placeholder for connection-specific data
+  void *userhandle;             //  for user   define i/o drive  handle.    yuxiang-2014-02-25      
 };
 
 struct mg_server; // Opaque structure describing server instance
@@ -85,7 +86,7 @@ int mg_websocket_write(struct mg_connection *, int opcode,
 // Deprecated in favor of mg_send_* interface
 int mg_write(struct mg_connection *, const void *buf, int len);
 int mg_printf(struct mg_connection *conn, const char *fmt, ...);
-
+int mg_write_range(struct mg_connection *c,char * file_name,int file_len);//yuxiang 2014-02-26
 
 const char *mg_get_header(const struct mg_connection *, const char *name);
 const char *mg_get_mime_type(const char *file_name);
@@ -96,6 +97,22 @@ int mg_parse_header(const char *hdr, const char *var_name, char *buf, size_t);
 // Utility functions
 void *mg_start_thread(void *(*func)(void *), void *param);
 char *mg_md5(char buf[33], ...);
+
+
+//yuxiang 2014-02-26
+typedef void *  (*MG_FIFO_OPEN) (char *fifoname,int * fifolen);//fifolen:filelen
+typedef int   (*MG_FIFO_READ) (void *fifohandle,char *buf, int readlen );
+typedef int   (*MG_FIFO_WRITE) (void *fifohandle,char *buf, int writelen );
+typedef int   (*MG_FIFO_SEEK) (void *fifohandle, int offset,int fromwhere );
+typedef int   (*MG_FIFO_CLOSE) (void *fifohandle );
+
+typedef struct {
+MG_FIFO_OPEN   mg_io_open;
+MG_FIFO_READ   mg_io_read;
+MG_FIFO_WRITE  mg_io_write;
+MG_FIFO_SEEK    mg_io_seek;
+MG_FIFO_CLOSE  mg_io_close;
+} mg_io_fun;
 
 #ifdef __cplusplus
 }

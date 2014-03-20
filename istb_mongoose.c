@@ -257,7 +257,7 @@ union endpoint {
   struct uri_handler *uh;   // URI handler user function
 };
 
-enum endpoint_type { EP_NONE, EP_FILE, EP_CGI, EP_USER, EP_PUT };
+enum endpoint_type { EP_NONE, EP_FILE, EP_CGI, EP_USER, EP_PUT,EP_USER_FILE };
 enum connection_flags {
   CONN_CLOSE = 1, CONN_SPOOL_DONE = 2, CONN_SSL_HANDS_SHAKEN = 4,
   CONN_HEADERS_SENT = 8, CONN_BUFFER = 16
@@ -1534,6 +1534,8 @@ static int convert_uri_to_file_name(struct connection *conn, char *buf,
   return 0;
 }
 
+
+
 int mg_write(struct mg_connection *c, const void *buf, int len) {
   return spool(&((struct connection *) c)->remote_iobuf, buf, len);
 }
@@ -1999,8 +2001,9 @@ static void open_file_endpoint(struct connection *conn, const char *path,
                   suggest_connection_header(&conn->mg_conn),
                   range, USE_EXTRA_HTTP_HEADERS);
   spool(&conn->remote_iobuf, headers, n);
-
+  DBG(("yuxiang headers test:%s \n",headers));//yxdoit
   if (!strcmp(conn->mg_conn.request_method, "HEAD")) {
+   DBG(("yuxiang:test close \n"));//yxdoit
     conn->flags |= CONN_SPOOL_DONE;
     close(conn->endpoint.fd);
     conn->endpoint_type = EP_NONE;
@@ -2138,10 +2141,14 @@ static void call_uri_handler_if_data_is_buffered(struct connection *conn) {
 #endif
     if (loc->len >= c->content_len) {
     conn->endpoint.uh->handler(c);
-    if (conn->flags & CONN_HEADERS_SENT) {
-      write_terminating_chunk(conn);
+    //yuxiang 2014-02-26
+    if (conn->endpoint_type!=EP_USER_FILE) {
+        if (conn->flags & CONN_HEADERS_SENT) {
+          write_terminating_chunk(conn);
+        }
+        close_local_endpoint(conn);
     }
-    close_local_endpoint(conn);
+
   }
 }
 
@@ -3252,7 +3259,13 @@ static void open_local_endpoint(struct connection *conn) {
   // Call URI handler if one is registered for this URI
   conn->endpoint.uh = find_uri_handler(conn->server, conn->mg_conn.uri);
   if (conn->endpoint.uh != NULL) {
-    conn->endpoint_type = EP_USER;
+    if (conn->mg_conn.server_param!=NULL) {
+      DBG(("yeah, now go my define user type \n"));
+      conn->endpoint_type = EP_USER_FILE; 
+    }
+    else{
+      conn->endpoint_type = EP_USER; 
+    }
     conn->mg_conn.content = conn->local_iobuf.buf;
 #if USE_POST_SIZE_LIMIT > 1
     {
@@ -3398,7 +3411,8 @@ static void process_request(struct connection *conn) {
     forward_post_data(conn);
   }
 #endif
-  if (conn->endpoint_type == EP_USER) {
+//yx motify it
+  if (conn->endpoint_type == EP_USER||conn->endpoint_type ==EP_USER_FILE) {
     call_uri_handler_if_data_is_buffered(conn);
   }
 #ifndef NO_DAV
@@ -3506,8 +3520,17 @@ static void close_local_endpoint(struct connection *conn) {
 
 static void transfer_file_data(struct connection *conn) {
   char buf[IOBUF_SIZE];
-  int n = read(conn->endpoint.fd, buf, conn->cl < (int64_t) sizeof(buf) ?
-               (int) conn->cl : (int) sizeof(buf));
+  int n = 0;
+
+  if(conn->endpoint_type == EP_USER_FILE){
+     mg_io_fun * mg_io=(mg_io_fun *)conn->mg_conn.server_param;
+     n=mg_io->mg_io_read(conn->mg_conn.userhandle, buf, conn->cl < (int64_t) sizeof(buf) ?
+                 (int) conn->cl : (int) sizeof(buf));
+  }
+  else{
+    n=read(conn->endpoint.fd, buf, conn->cl < (int64_t) sizeof(buf) ?
+                 (int) conn->cl : (int) sizeof(buf));
+  }
 
   if (is_error(n)) {
     close_local_endpoint(conn);
@@ -3558,7 +3581,7 @@ unsigned int mg_poll_server(struct mg_server *server, int milliseconds) {
   LINKED_LIST_FOREACH(&server->active_connections, lp, tmp) {
     conn = LINKED_LIST_ENTRY(lp, struct connection, link);
     add_to_set(conn->client_sock, &read_set, &max_fd);
-    if (conn->endpoint_type == EP_FILE) {
+    if (conn->endpoint_type == EP_FILE||conn->endpoint_type == EP_USER_FILE) {
       transfer_file_data(conn);
     } else if (conn->endpoint_type == EP_CGI) {
       add_to_set(conn->endpoint.cgi_sock, &read_set, &max_fd);
@@ -3884,3 +3907,55 @@ struct mg_server *mg_create_server(void *server_data) {
 
   return server;
 }
+
+
+//add for user-define file i/o dirver,need fix!
+ int mg_write_range(struct mg_connection *c,char * file_name,int file_len){
+  char date[64], lm[64], etag[64], range[64], headers[500];
+  const char *msg = "OK", *hdr;
+  time_t curtime = time(NULL);
+  int64_t r1, r2;
+  int n;
+  mg_io_fun *http_io_opreate=NULL;
+  struct connection *conn=(struct connection *) c;
+  conn->mg_conn.status_code = 200;
+  conn->cl = file_len;
+  range[0] = '\0';
+
+  // If Range: header specified, act accordingly
+  r1 = r2 = 0;
+  hdr = mg_get_header(&conn->mg_conn, "Range");
+  if (hdr != NULL && (n = parse_range_header(hdr, &r1, &r2)) > 0 &&
+      r1 >= 0 && r2 >= 0) {
+    conn->mg_conn.status_code  = 206;
+    conn->cl = n == 2 ? (r2 > conn->cl ? conn->cl : r2) - r1 + 1: conn->cl - r1;
+    mg_snprintf(range, sizeof(range), "Content-Range: bytes "
+                "%" INT64_FMT "-%" INT64_FMT "/%" INT64_FMT "\r\n",
+                r1, r1 + conn->cl - 1, (int64_t) file_len);
+    msg = "Partial Content";
+    //lseek(conn->endpoint.fd, r1, SEEK_SET);
+    http_io_opreate=(mg_io_fun *)conn->mg_conn.server_param;
+    http_io_opreate->mg_io_seek(conn->mg_conn.userhandle,r1,SEEK_SET);
+  }
+  DBG(("yuxiang range test:%s \n",range));//yxdoit
+  // Prepare Etag, Date, Last-Modified headers. Must be in UTC, according to
+  // http://www.w3.org/Protocols/rfc2616/rfc2616-sec3.html#sec3.3
+  gmt_time_string(date, sizeof(date), &curtime);
+
+  n = mg_snprintf(headers, sizeof(headers),
+                  "HTTP/1.1 %d %s\r\n"
+                  "Date: %s\r\n"
+                  "Content-Type: %s\r\n"
+                  "Content-Length: %" INT64_FMT "\r\n"
+                  "Connection: %s\r\n"
+                  "Accept-Ranges: bytes\r\n"
+                  "%s%s\r\n",
+                  conn->mg_conn.status_code, msg, date,
+                  mg_get_mime_type((const char *)file_name), conn->cl,
+                  suggest_connection_header(&conn->mg_conn),
+                  range, USE_EXTRA_HTTP_HEADERS);
+
+  DBG(("yuxiang:header\n%s \n",headers));
+  spool(&conn->remote_iobuf, headers, n);
+}
+
