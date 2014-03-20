@@ -817,7 +817,6 @@ fail:
         options.tmp_m3u8_file=NULL;
     }
     istb_m3u8_queue_destroy(queue_head);
-    m3u8DBG("fffffff \n");
     istb_m3u8_event_report(M3U8_SEGMENT_FINISH);
     return 0;
 }
@@ -1361,7 +1360,7 @@ int istb_m3u8_queue_destroy(m3u8queue_t * qhead){
             queuenode=NULL;
         }
     }
-    m3u8DBG("xxxxxxx \n");
+    m3u8DBG("m3u8:\n %s \n",qhead->m3u8data->buf);
     istb_m3u8_buffer_destroy(qhead->m3u8data);
     free(qhead);
     qhead=NULL;
@@ -1406,33 +1405,83 @@ int istb_m3u8_segment_get(char *filename,char * readbuf, int readlen){
     }
     return  -1;
 }
-
 #if 0
-char* substr(const char*str, unsigned start, unsigned end)
-{
-    unsigned n = end - start;
-    static char stbuf[256];
-    strncpy(stbuf, str + start, n);
-    stbuf[n] = 0; //??????0
-    return stbuf;
-}
-void main()
-{
-        char* fileName="F://workspace//zhoulu.wmv";
-        char* fileExt;
-        char *ptr=NULL;
-        char  c = '.'; 
-        ptr = strrchr(fileName, c); //??????c???
-        int pos = ptr-fileName;//????? ????
-        char suffixname[32]={0};
-        strncpy(suffixname,ptr+1,(strlen(fileName)-ptr-1));
-        fileExt=substr(fileName,pos+1,strlen(fileName));
-        printf(fileExt);
-        printf("/n");
-}
-
-
-int istb_m3u8_index_get(char * readbuf, int readlen){
-
-}
+typedef void *  (*MG_FIFO_OPEN) (char *fifoname);
+typedef int   (*MG_FIFO_READ) (void *fifohandle,char *buf, int readlen );
+typedef int   (*MG_FIFO_WRITE) (void *fifohandle,char *buf, int writelen );
+typedef int   (*MG_FIFO_SEEK) (void *fifohandle, int offset,int fromwhere );
+typedef int   (*MG_FIFO_CLOSE) (void *fifohandle );
 #endif
+
+
+void * istb_m3u8_api_open(char *fifoname,int  * fifolen){
+    m3u8DBG("name=%s \n",fifoname);
+    struct list_node  *listnode=NULL;
+    struct list_node  *tmp=NULL;
+    m3u8queue_t  *  queuenode=NULL;
+    int ret=0;
+    char *ptr=NULL;
+    char  c = '.'; 
+    char suffixname[32]={0};
+
+    if (queue_head==NULL) {
+        m3u8DBG("queue head null \n");
+        return -1;
+    }
+    ptr = strrchr(fifoname, c); //get the last c position
+    strncpy(suffixname,ptr+1,strlen(ptr+1));
+    m3u8DBG("suffixname=%s \n",suffixname);
+
+    if(!strncmp(suffixname,"m3u8",strlen("m3u8"))){
+        *fifolen=queue_head->m3u8data->write_ptr;
+        return (void *)(queue_head->m3u8data);
+    }
+    if (queue_head != NULL) {
+        ISTB_LINKED_LIST_FOREACH(&(queue_head->link), listnode, tmp) {
+            queuenode=ISTB_LINKED_LIST_ENTRY(listnode, m3u8queue_t,link);
+            if(queuenode->m3u8data){
+                m3u8DBG("yes the destory name=%s \n",queuenode->m3u8data->bufname);
+                if(!strncmp(fifoname,queuenode->m3u8data->bufname,strlen(fifoname))){
+                     *fifolen=queuenode->m3u8data->write_ptr;
+                    return  (void *)(queuenode->m3u8data);
+                }
+            }
+        }
+    }
+    m3u8DBG("never find target file! \n");
+    return 0;
+}
+
+//fix me :must add the lock!!!!!
+int istb_m3u8_api_read(void *fifohandle,char *buf, int readlen ){
+    int ret=0;
+    if (!fifohandle||!buf) {
+        m3u8DBG("param error \n");
+        return -1;
+    }
+    m3u8buf_t *bufhandle=(m3u8buf_t *)fifohandle;
+    ret=istb_m3u8_buffer_read(bufhandle,buf,readlen);
+    return ret;
+}
+
+int istb_m3u8_api_write(void *fifohandle,char *buf, int writelen ){
+    int ret=0;
+    if (!fifohandle||!buf) {
+        m3u8DBG("param error \n");
+    }
+    m3u8buf_t *bufhandle=(m3u8buf_t *)fifohandle;
+    ret=istb_m3u8_buffer_write(bufhandle,buf,writelen);
+    return ret;
+}
+
+int istb_m3u8_api_seek (void *fifohandle, int offset,int fromwhere){
+    if (!fifohandle) {
+        m3u8DBG("param error \n");
+    }
+    m3u8buf_t *bufhandle=(m3u8buf_t *)fifohandle;
+    bufhandle->read_ptr=offset;
+    return 0;
+}
+int istb_m3u8_api_close(void *fifohandle){
+    return 0;
+}

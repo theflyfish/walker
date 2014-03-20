@@ -33,6 +33,14 @@ int istb_m3u8_event_subscribe(M3U8_EVENT_CALLBACK Callback);
 int istb_m3u8_event_report(int eventtype);
 int istb_m3u8_stop(pthread_t tid);
 int istb_m3u8_segment_get(char *filename,char * readbuf, int readlen);
+
+void * istb_m3u8_api_open(char *fifoname,int * bufferlen);
+int istb_m3u8_api_read(void *fifohandle,char *buf, int readlen);
+int istb_m3u8_api_write(void *fifohandle,char *buf, int writelen);
+int istb_m3u8_api_close(void *fifohandle);
+int istb_m3u8_api_seek (void *fifohandle, int offset,int fromwhere);
+
+
 #ifdef __cplusplus
 }
 #endif
